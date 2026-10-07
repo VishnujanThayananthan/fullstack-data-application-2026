@@ -1,21 +1,31 @@
 # app/routers/items.py
+import unicodedata
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Path, Query, Response
 
 from app.schemas.item import ItemCreate, ItemRead, ItemUpdate
 
 router = APIRouter(prefix="/items", tags=["items"])
 
-FAKE_DB: dict[int, dict] = {}
-_next_id = 1
+FAKE_DB: dict[int, dict[str, Any]] = {}
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", value.lower())
+    return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+
+
+def _next_id() -> int:
+    return max(FAKE_DB, default=0) + 1
 
 
 # --- CREATE (POST) ---
 @router.post("", response_model=ItemRead, status_code=201)
 def create_item(payload: ItemCreate):
-    global _next_id
-    item = {"id": _next_id, **payload.model_dump()}
-    FAKE_DB[_next_id] = item
-    _next_id += 1
+    item_id = _next_id()
+    item = {"id": item_id, **payload.model_dump()}
+    FAKE_DB[item_id] = item
     return item
 
 
@@ -29,7 +39,10 @@ def list_items(
 ):
     results = list(FAKE_DB.values())
     if q:
-        results = [item for item in results if q.lower() in item["titre"].lower()]
+        normalized_query = _normalize_text(q)
+        results = [
+            item for item in results if normalized_query in _normalize_text(item["titre"])
+        ]
     if disponible is not None:
         results = [item for item in results if item["disponible"] == disponible]
     return results[skip: skip + limit]
@@ -63,3 +76,4 @@ def delete_item(item_id: int = Path(ge=1)):
     if item_id not in FAKE_DB:
         raise HTTPException(status_code=404, detail=f"Item {item_id} introuvable")
     del FAKE_DB[item_id]
+    return Response(status_code=204)
